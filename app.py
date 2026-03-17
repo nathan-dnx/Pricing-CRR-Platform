@@ -83,6 +83,50 @@ def crr_call_price(S0, K, T, r, sigma, N):
         payoff = np.exp(-r * dt) * (p * payoff[:-1] + (1 - p) * payoff[1:])
     return payoff[0]
 
+def monte_carlo_hedging(S0, K, T, r, sigma, M_simulations, N_steps):
+    dt = T / N_steps
+    
+    # Initialisation des matrices (M trajectoires, N étapes)
+    S = np.zeros((M_simulations, N_steps + 1))
+    S[:, 0] = S0
+    delta = np.zeros((M_simulations, N_steps + 1))
+    cash = np.zeros((M_simulations, N_steps + 1))
+    
+    # Prix théorique initial de l'option (prime reçue)
+    d1_init = (np.log(S0 / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    prix_bs_init = S0 * norm.cdf(d1_init) - K * np.exp(-r * T) * norm.cdf(d1_init - sigma * np.sqrt(T))
+    
+    # Étape 0 : On vend l'option (on reçoit le prix), on achète le Delta initial en actions
+    delta[:, 0] = norm.cdf(d1_init)
+    cash[:, 0] = prix_bs_init - delta[:, 0] * S0
+    
+    # Simulation des trajectoires et couverture dynamique
+    for k in range(1, N_steps + 1):
+        T_restant = T - k * dt
+        
+        # 1. Génération du mouvement brownien géométrique
+        Z = np.random.standard_normal(M_simulations)
+        S[:, k] = S[:, k-1] * np.exp((r - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z)
+        
+        # Actualisation du cash avec le taux sans risque
+        cash[:, k] = cash[:, k-1] * np.exp(r * dt)
+        
+        # 2. Calcul du nouveau Delta
+        if T_restant > 0:
+            d1 = (np.log(S[:, k] / K) + (r + 0.5 * sigma**2) * T_restant) / (sigma * np.sqrt(T_restant))
+            delta[:, k] = norm.cdf(d1)
+        else: # À maturité, le Delta vaut 1 si l'option est dans la monnaie, 0 sinon
+            delta[:, k] = np.where(S[:, k] > K, 1.0, 0.0)
+            
+        # 3. Ajustement de la position (Achat/Vente d'actions)
+        cash[:, k] -= (delta[:, k] - delta[:, k-1]) * S[:, k]
+        
+    # P&L Final (Erreur de couverture) à maturité
+    payoff = np.maximum(S[:, -1] - K, 0)
+    pnl = cash[:, -1] + delta[:, -1] * S[:, -1] - payoff
+    
+    return S, pnl
+
 # --- CALCULS EN TEMPS RÉEL ---
 prix_bs, delta_bs = black_scholes_call(S0, K, T, r, sigma)
 prix_crr = crr_call_price(S0, K, T, r, sigma, N)
@@ -101,7 +145,7 @@ st.markdown("---")
 # ==========================================
 # LES ONGLETS D'ANALYSE (VISUALISATION)
 # ==========================================
-tab1, tab2, tab3 = st.tabs(["📉 Convergence CRR/BS", "🌳 Arbre Binomial", "🎲 Stratégies Naïves"])
+tab1, tab2, tab3, tab4 = st.tabs(["📉 Convergence CRR/BS", "🌳 Arbre Binomial", "🎲 Stratégies Naïves", "🛡️ Delta-Hedging (Monte Carlo)"])
 
 with tab1:
     st.header("Convergence vers Black-Scholes")
@@ -250,3 +294,39 @@ with tab3:
             st.error(f"💥 RUINE TOTALE au tour {len(historique_capital)-1} ! Le capital n'était pas suffisant pour couvrir la mise exponentielle.")
         else:
             st.success(f"✅ Survie réussie sur {n_tours} tours. Capital final : {historique_capital[-1]} €. Mais jusqu'à quand ?")
+
+with tab4:
+    st.header("Couverture Dynamique (Delta-Hedging)")
+    st.markdown("Simulation de trajectoires par mouvement brownien géométrique et calcul de l'erreur de réplication (PnL) à maturité.")
+    
+    col_mc1, col_mc2 = st.columns(2)
+    M_sim = col_mc1.slider("Nombre de trajectoires (M)", min_value=10, max_value=1000, value=100, step=10)
+    N_steps_mc = col_mc2.slider("Fréquence de rebalancement (Pas)", min_value=10, max_value=252, value=50, step=10)
+    
+    if st.button("🚀 Lancer le Delta-Hedging"):
+        with st.spinner("Simulation Monte Carlo en cours..."):
+            trajectoires, pnl = monte_carlo_hedging(S0, K, T, r, sigma, M_sim, N_steps_mc)
+            
+            col_res1, col_res2 = st.columns(2)
+            
+            # Graphique 1 : Trajectoires du sous-jacent
+            fig_traj = go.Figure()
+            # On affiche max 100 trajectoires pour ne pas faire lagger le navigateur
+            for i in range(min(M_sim, 100)):
+                fig_traj.add_trace(go.Scatter(y=trajectoires[i, :], mode='lines', line=dict(width=1, color='lightblue'), opacity=0.5, showlegend=False))
+            fig_traj.add_trace(go.Scatter(y=[K]*(N_steps_mc+1), mode='lines', line=dict(color='red', dash='dash', width=2), name="Strike (K)"))
+            
+            fig_traj.update_layout(title="Trajectoires simulées du sous-jacent", xaxis_title="Pas de temps (k)", yaxis_title="Prix (S)", template="plotly_white")
+            col_res1.plotly_chart(fig_traj, width='stretch')
+            
+            # Graphique 2 : Histogramme du P&L (Erreur de couverture)
+            fig_pnl = go.Figure()
+            fig_pnl.add_trace(go.Histogram(x=pnl, nbinsx=30, marker_color='#00CC96'))
+            fig_pnl.update_layout(title="Distribution du P&L de Couverture", xaxis_title="Erreur de réplication (€)", yaxis_title="Fréquence", template="plotly_white")
+            
+            # Ligne verticale à 0
+            fig_pnl.add_vline(x=0, line_dash="dash", line_color="red")
+            col_res2.plotly_chart(fig_pnl, width='stretch')
+            
+            st.success(f"Erreur moyenne de couverture (PnL) : {np.mean(pnl):.4f} € | Écart-type : {np.std(pnl):.4f} €")
+            st.info("💡 Plus la fréquence de rebalancement augmente, plus la distribution du P&L se resserre autour de zéro (couverture parfaite en continu).")
