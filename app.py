@@ -1,332 +1,908 @@
+"""
+app.py — Interface Broker-Style
+Plateforme de Pricing CRR & Delta-Hedging
+Equipe 4302 — ESILV Fintech A4 — Mars 2026
+
+Lancement : streamlit run app.py
+"""
+
 import streamlit as st
 import numpy as np
-import yfinance as yf
 import plotly.graph_objects as go
-from scipy.stats import norm
+from plotly.subplots import make_subplots
 
-# --- CONFIGURATION DE LA PAGE ---
-st.set_page_config(page_title="Pi² - Pricing CRR", layout="wide")
+from backend import (
+    black_scholes_call,
+    crr_call_price,
+    crr_tree_nodes,
+    monte_carlo_hedging,
+    convergence_data,
+    get_yfinance_data,
+    simulate_martingale_single,
+)
 
-# ==========================================
-# SIDEBAR : PANNEAU DE CONTRÔLE (INPUTS)
-# ==========================================
-st.sidebar.header("⚙️ Paramètres")
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONFIG PAGE
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# Sélecteur de mode (Manuel / API)
-mode = st.sidebar.radio("Mode d'alimentation", ["Manuel", "API (yfinance)"])
+st.set_page_config(
+    page_title="CRR Pricing Terminal",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-if mode == "API (yfinance)":
-    # Menu déroulant pour choisir l'action proprement
-    liste_tickers = {"Apple (AAPL)": "AAPL", "LVMH": "MC.PA", "CAC 40": "^FCHI", "S&P 500": "^GSPC"}
-    choix = st.sidebar.selectbox("Choisissez l'actif", list(liste_tickers.keys()))
-    ticker = liste_tickers[choix]
-    
-    with st.spinner('Connexion à Yahoo Finance...'):
-        try:
-            # Récupération des données via yfinance
-            data = yf.Ticker(ticker).history(period="1y")
-            
-            # S0 : dernier cours de clôture
-            S0 = float(data["Close"].iloc[-1])
-            
-            # Sigma : Volatilité historique annualisée
-            rendements = np.log(data["Close"] / data["Close"].shift(1))
-            sigma = float(rendements.std() * np.sqrt(252))
-            
-            st.sidebar.success(f"Données de {choix} récupérées !")
-            st.sidebar.metric("Spot (S0) en direct", f"{S0:.2f}")
-            st.sidebar.metric("Volatilité (σ) historique", f"{sigma:.2%}")
-            
-        except Exception as e:
-            st.sidebar.error("Erreur API. Passage en mode manuel.")
-            S0 = 100.0
-            sigma = 0.20
-else:
-    # Mode Manuel : affichage des sliders pour S0 et sigma
-    S0 = st.sidebar.number_input("Spot (S0)", min_value=1.0, value=100.0, step=1.0)
-    sigma = st.sidebar.slider("Volatilité (σ)", min_value=0.01, max_value=1.0, value=0.20, step=0.01)
+# ─────────────────────────────────────────────────────────────────────────────
+# PALETTE & THÈME
+# ─────────────────────────────────────────────────────────────────────────────
+CYAN    = "#00D4FF"
+GREEN   = "#00FF88"
+RED     = "#FF4466"
+ORANGE  = "#FF9900"
+PURPLE  = "#B388FF"
+YELLOW  = "#FFD600"
+BG_DARK = "#0A0E1A"
+BG_CARD = "#111827"
+BG_MID  = "#1A2235"
+BORDER  = "#1E3A5F"
+TEXT    = "#E2E8F0"
+MUTED   = "#64748B"
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Autres Paramètres")
+# Styles de base partagés — sans legend/xaxis/yaxis (gérés par figure)
+THEME_LAYOUT = dict(
+    paper_bgcolor=BG_CARD,
+    plot_bgcolor=BG_DARK,
+    font=dict(color=TEXT, family="monospace"),
+    hoverlabel=dict(bgcolor=BG_MID, bordercolor=CYAN, font=dict(color=TEXT)),
+)
+AXIS_STYLE = dict(gridcolor=BORDER, zerolinecolor=BORDER, linecolor=BORDER)
 
-# Les autres variables restent manuelles dans les deux modes
-K = st.sidebar.number_input("Strike (K)", min_value=1.0, value=S0, step=1.0) # Le strike s'adapte au S0
-T = st.sidebar.slider("Maturité (T en années)", min_value=0.1, max_value=3.0, value=1.0, step=0.1)
-r = st.sidebar.slider("Taux sans risque (r)", min_value=0.0, max_value=0.15, value=0.05, step=0.01)
-N = st.sidebar.slider("Nombre de pas (N)", min_value=1, max_value=500, value=50, step=1)
-# ==========================================
-# MAIN PANEL : TABLEAU DE BORD
-# ==========================================
-st.title("📈 Projet Pi² : Plateforme de Pricing CRR")
-st.markdown("*Modèle binomial Cox-Ross-Rubinstein vs Modèle continu Black-Scholes.*")
+# ═══════════════════════════════════════════════════════════════════════════════
+# CSS GLOBAL — BROKER STYLE
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# --- MOTEUR MATHÉMATIQUE ---
-def black_scholes_call(S0, K, T, r, sigma):
-    d1 = (np.log(S0 / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-    prix = S0 * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
-    delta = norm.cdf(d1)
-    return prix, delta
+st.markdown(f"""
+<style>
+  /* ── Fond global */
+  .stApp {{ background-color: {BG_DARK}; }}
+  section[data-testid="stSidebar"] {{ background-color: #0D1321 !important; border-right: 1px solid {BORDER}; }}
 
-def crr_call_price(S0, K, T, r, sigma, N):
-    dt = T / N
-    u = np.exp(sigma * np.sqrt(dt))
-    d = 1 / u
-    p = (np.exp(r * dt) - d) / (u - d)
-    
-    # Valeurs finales du sous-jacent (étape N)
-    ST = np.array([S0 * (u**(N-j)) * (d**j) for j in range(N+1)])
-    payoff = np.maximum(ST - K, 0)
-    
-    # Induction rétrograde
-    for i in range(N):
-        payoff = np.exp(-r * dt) * (p * payoff[:-1] + (1 - p) * payoff[1:])
-    return payoff[0]
+  /* ── Sidebar header */
+  .sidebar-logo {{
+    font-family: monospace;
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: {CYAN};
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 0.5rem 0 0.2rem 0;
+  }}
+  .sidebar-sub {{
+    font-size: 0.7rem;
+    color: {MUTED};
+    letter-spacing: 0.06em;
+    margin-bottom: 1rem;
+  }}
 
-def monte_carlo_hedging(S0, K, T, r, sigma, M_simulations, N_steps):
-    dt = T / N_steps
-    
-    # Initialisation des matrices (M trajectoires, N étapes)
-    S = np.zeros((M_simulations, N_steps + 1))
-    S[:, 0] = S0
-    delta = np.zeros((M_simulations, N_steps + 1))
-    cash = np.zeros((M_simulations, N_steps + 1))
-    
-    # Prix théorique initial de l'option (prime reçue)
-    d1_init = (np.log(S0 / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    prix_bs_init = S0 * norm.cdf(d1_init) - K * np.exp(-r * T) * norm.cdf(d1_init - sigma * np.sqrt(T))
-    
-    # Étape 0 : On vend l'option (on reçoit le prix), on achète le Delta initial en actions
-    delta[:, 0] = norm.cdf(d1_init)
-    cash[:, 0] = prix_bs_init - delta[:, 0] * S0
-    
-    # Simulation des trajectoires et couverture dynamique
-    for k in range(1, N_steps + 1):
-        T_restant = T - k * dt
-        
-        # 1. Génération du mouvement brownien géométrique
-        Z = np.random.standard_normal(M_simulations)
-        S[:, k] = S[:, k-1] * np.exp((r - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z)
-        
-        # Actualisation du cash avec le taux sans risque
-        cash[:, k] = cash[:, k-1] * np.exp(r * dt)
-        
-        # 2. Calcul du nouveau Delta
-        if T_restant > 0:
-            d1 = (np.log(S[:, k] / K) + (r + 0.5 * sigma**2) * T_restant) / (sigma * np.sqrt(T_restant))
-            delta[:, k] = norm.cdf(d1)
-        else: # À maturité, le Delta vaut 1 si l'option est dans la monnaie, 0 sinon
-            delta[:, k] = np.where(S[:, k] > K, 1.0, 0.0)
-            
-        # 3. Ajustement de la position (Achat/Vente d'actions)
-        cash[:, k] -= (delta[:, k] - delta[:, k-1]) * S[:, k]
-        
-    # P&L Final (Erreur de couverture) à maturité
-    payoff = np.maximum(S[:, -1] - K, 0)
-    pnl = cash[:, -1] + delta[:, -1] * S[:, -1] - payoff
-    
-    return S, pnl
+  /* ── Metric cards */
+  .metric-card {{
+    background: {BG_CARD};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+    padding: 1rem 1.2rem 0.8rem 1.2rem;
+    position: relative;
+    overflow: hidden;
+  }}
+  .metric-card::before {{
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }}
+  .metric-card.cyan::before  {{ background: {CYAN}; }}
+  .metric-card.green::before {{ background: {GREEN}; }}
+  .metric-card.red::before   {{ background: {RED}; }}
+  .metric-card.purple::before{{ background: {PURPLE}; }}
 
-# --- CALCULS EN TEMPS RÉEL ---
+  .metric-label {{
+    font-size: 0.68rem;
+    color: {MUTED};
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.3rem;
+    font-family: monospace;
+  }}
+  .metric-value {{
+    font-size: 1.6rem;
+    font-weight: 700;
+    font-family: monospace;
+    letter-spacing: 0.04em;
+    line-height: 1.1;
+  }}
+  .metric-value.cyan   {{ color: {CYAN}; }}
+  .metric-value.green  {{ color: {GREEN}; }}
+  .metric-value.red    {{ color: {RED}; }}
+  .metric-value.purple {{ color: {PURPLE}; }}
+
+  .metric-sub {{
+    font-size: 0.72rem;
+    color: {MUTED};
+    margin-top: 0.3rem;
+    font-family: monospace;
+  }}
+
+  /* ── Header principal */
+  .terminal-header {{
+    background: linear-gradient(135deg, {BG_CARD} 0%, #0D1A2E 100%);
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+    padding: 1.2rem 1.8rem;
+    margin-bottom: 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }}
+  .terminal-title {{
+    font-family: monospace;
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: {CYAN};
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }}
+  .terminal-subtitle {{
+    font-size: 0.72rem;
+    color: {MUTED};
+    letter-spacing: 0.05em;
+    margin-top: 0.2rem;
+  }}
+  .terminal-badge {{
+    background: rgba(0, 212, 255, 0.12);
+    border: 1px solid {CYAN};
+    border-radius: 20px;
+    padding: 0.3rem 0.9rem;
+    font-family: monospace;
+    font-size: 0.72rem;
+    color: {CYAN};
+    letter-spacing: 0.06em;
+  }}
+
+  /* ── Section titles */
+  .section-title {{
+    font-family: monospace;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: {CYAN};
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    border-left: 3px solid {CYAN};
+    padding-left: 0.7rem;
+    margin: 1.2rem 0 0.8rem 0;
+  }}
+
+  /* ── Info band */
+  .info-band {{
+    background: rgba(0, 212, 255, 0.06);
+    border: 1px solid rgba(0, 212, 255, 0.2);
+    border-radius: 6px;
+    padding: 0.6rem 1rem;
+    font-family: monospace;
+    font-size: 0.78rem;
+    color: {TEXT};
+    margin: 0.5rem 0;
+  }}
+  .warn-band {{
+    background: rgba(255, 153, 0, 0.08);
+    border: 1px solid rgba(255, 153, 0, 0.3);
+    border-radius: 6px;
+    padding: 0.6rem 1rem;
+    font-family: monospace;
+    font-size: 0.78rem;
+    color: {ORANGE};
+    margin: 0.5rem 0;
+  }}
+  .error-band {{
+    background: rgba(255, 68, 102, 0.08);
+    border: 1px solid rgba(255, 68, 102, 0.3);
+    border-radius: 6px;
+    padding: 0.6rem 1rem;
+    font-family: monospace;
+    font-size: 0.78rem;
+    color: {RED};
+    margin: 0.5rem 0;
+  }}
+
+  /* ── Tabs */
+  div[data-testid="stTabs"] button {{
+    font-family: monospace !important;
+    font-size: 0.78rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+    color: {MUTED} !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 0.5rem 1rem !important;
+  }}
+  div[data-testid="stTabs"] button[aria-selected="true"] {{
+    color: {CYAN} !important;
+    border-bottom: 2px solid {CYAN} !important;
+  }}
+  div[data-testid="stTabContent"] {{
+    background: {BG_CARD};
+    border: 1px solid {BORDER};
+    border-radius: 0 8px 8px 8px;
+    padding: 1.2rem;
+    margin-top: -1px;
+  }}
+
+  /* ── Sidebar sliders */
+  .stSlider label {{ font-size: 0.75rem !important; color: {MUTED} !important; font-family: monospace !important; text-transform: uppercase; letter-spacing: 0.06em; }}
+  .stSlider [data-testid="stTickBarMin"],
+  .stSlider [data-testid="stTickBarMax"] {{ color: {MUTED} !important; font-size: 0.65rem !important; }}
+
+  /* ── Number inputs */
+  .stNumberInput label {{ font-size: 0.75rem !important; color: {MUTED} !important; font-family: monospace !important; text-transform: uppercase; letter-spacing: 0.06em; }}
+
+  /* ── Divider */
+  hr {{ border-color: {BORDER} !important; margin: 0.8rem 0; }}
+
+  /* ── Hide streamlit default elements (pas le header : contient le toggle sidebar) */
+  #MainMenu {{ visibility: hidden; }}
+  footer {{ visibility: hidden; }}
+  header {{ background: transparent !important; }}
+
+  /* ── Status dot */
+  .status-dot {{
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: {GREEN};
+    box-shadow: 0 0 6px {GREEN};
+    margin-right: 6px;
+    animation: pulse 2s infinite;
+  }}
+  @keyframes pulse {{
+    0%, 100% {{ opacity: 1; }}
+    50% {{ opacity: 0.4; }}
+  }}
+
+  /* ── Table styling */
+  .stDataFrame {{ border: 1px solid {BORDER} !important; border-radius: 6px; }}
+  .stDataFrame th {{ background: {BG_MID} !important; color: {CYAN} !important; font-family: monospace !important; font-size: 0.72rem !important; text-transform: uppercase; }}
+  .stDataFrame td {{ font-family: monospace !important; font-size: 0.78rem !important; color: {TEXT} !important; }}
+
+  /* ── Button */
+  .stButton button {{
+    background: rgba(0, 212, 255, 0.1) !important;
+    border: 1px solid {CYAN} !important;
+    color: {CYAN} !important;
+    font-family: monospace !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+    border-radius: 6px !important;
+    transition: all 0.2s;
+  }}
+  .stButton button:hover {{
+    background: rgba(0, 212, 255, 0.2) !important;
+    box-shadow: 0 0 12px rgba(0, 212, 255, 0.3) !important;
+  }}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CACHE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(show_spinner=False)
+def cached_convergence(S0, K, T, r, sigma, N_max, prix_bs):
+    return convergence_data(S0, K, T, r, sigma, N_max, prix_bs)
+
+@st.cache_data(show_spinner=False)
+def cached_yfinance(ticker):
+    return get_yfinance_data(ticker)
+
+@st.cache_data(show_spinner=False)
+def cached_monte_carlo(S0, K, T, r, sigma, M, N_steps):
+    return monte_carlo_hedging(S0, K, T, r, sigma, M, N_steps)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with st.sidebar:
+    st.markdown('<div class="sidebar-logo">◈ CRR Terminal</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-sub">Pricing Engine v1.0 — Equipe 4302</div>', unsafe_allow_html=True)
+    st.markdown("---")
+
+    # ── Mode
+    st.markdown('<div class="section-title">Source</div>', unsafe_allow_html=True)
+    mode = st.radio(
+        "",
+        options=["Manuel", "API (yfinance)"],
+        label_visibility="collapsed",
+    )
+
+    # ── API mode
+    if mode == "API (yfinance)":
+        st.markdown('<div class="section-title">Actif</div>', unsafe_allow_html=True)
+        TICKERS = {
+            "Apple (AAPL)": "AAPL",
+            "LVMH (MC.PA)": "MC.PA",
+            "CAC 40 (^FCHI)": "^FCHI",
+            "S&P 500 (^GSPC)": "^GSPC",
+        }
+        choix = st.selectbox("", list(TICKERS.keys()), label_visibility="collapsed")
+        ticker = TICKERS[choix]
+
+        with st.spinner("Connexion à Yahoo Finance..."):
+            try:
+                S0_api, sigma_api, _ = cached_yfinance(ticker)
+                st.markdown(
+                    f'<div class="info-band"><span class="status-dot"></span>'
+                    f'<b>{choix}</b><br>'
+                    f'S₀ = <b style="color:{CYAN}">{S0_api:.2f}</b> &nbsp;|&nbsp; '
+                    f'σ = <b style="color:{CYAN}">{sigma_api:.2%}</b></div>',
+                    unsafe_allow_html=True,
+                )
+                S0_input = S0_api
+                sigma_input = sigma_api
+            except Exception as e:
+                st.markdown(f'<div class="error-band">⚠ Erreur API — passage en manuel<br><small>{e}</small></div>', unsafe_allow_html=True)
+                S0_input = 100.0
+                sigma_input = 0.20
+    else:
+        st.markdown('<div class="section-title">Spot & Volatilité</div>', unsafe_allow_html=True)
+        S0_input = st.number_input("Spot S₀ (€)", min_value=1.0, value=100.0, step=1.0)
+        sigma_input = st.slider("Volatilité σ", min_value=0.01, max_value=1.0, value=0.20, step=0.01, format="%.2f")
+
+    st.markdown("---")
+    st.markdown('<div class="section-title">Paramètres</div>', unsafe_allow_html=True)
+
+    K       = st.number_input("Strike K (€)", min_value=1.0, value=float(round(S0_input)), step=1.0)
+    T       = st.slider("Maturité T (ans)", min_value=0.1, max_value=3.0, value=1.0, step=0.1, format="%.1f")
+    r       = st.slider("Taux r", min_value=0.0, max_value=0.15, value=0.05, step=0.005, format="%.3f")
+    N       = st.slider("Pas N (CRR)", min_value=1, max_value=500, value=50, step=1)
+
+    S0    = S0_input
+    sigma = sigma_input
+
+    st.markdown("---")
+
+    # ── Moneyness badge
+    ratio = S0 / K
+    if ratio > 1.02:
+        mny_color, mny_label = GREEN, "ITM"
+    elif ratio < 0.98:
+        mny_color, mny_label = RED, "OTM"
+    else:
+        mny_color, mny_label = YELLOW, "ATM"
+
+    # ── Paramètres CRR affichés
+    dt_disp = T / N
+    u_disp  = np.exp(sigma * np.sqrt(dt_disp))
+    d_disp  = 1 / u_disp
+    p_disp  = (np.exp(r * dt_disp) - d_disp) / (u_disp - d_disp)
+
+    st.markdown(f"""
+    <div class="metric-card" style="margin-bottom:0.5rem">
+      <div class="metric-label">Paramètres CRR</div>
+      <div style="font-family:monospace;font-size:0.8rem;line-height:1.8;color:{TEXT}">
+        u = <span style="color:{CYAN}">{u_disp:.5f}</span><br>
+        d = <span style="color:{CYAN}">{d_disp:.5f}</span><br>
+        p = <span style="color:{CYAN}">{p_disp:.5f}</span><br>
+        Δt = <span style="color:{MUTED}">{dt_disp:.5f}</span>
+      </div>
+      <div class="metric-sub">Moneyness :
+        <span style="color:{mny_color};font-weight:700">{mny_label}</span>
+        ({ratio:.3f})
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not (0 < p_disp < 1):
+        st.markdown(
+            f'<div class="error-band">⚠ Non-arbitrage violé<br>p = {p_disp:.4f} ∉ ]0,1[</div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CALCULS EN TEMPS RÉEL
+# ═══════════════════════════════════════════════════════════════════════════════
+
 prix_bs, delta_bs = black_scholes_call(S0, K, T, r, sigma)
-prix_crr = crr_call_price(S0, K, T, r, sigma, N)
-erreur = abs(prix_crr - prix_bs)
+prix_crr          = crr_call_price(S0, K, T, r, sigma, N)
+erreur            = abs(prix_crr - prix_bs)
+erreur_pct        = (erreur / prix_bs * 100) if prix_bs > 1e-6 else 0.0
 
-# --- AFFICHAGE DES MÉTRIQUES ---
-st.subheader("Indicateurs Clés")
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Prix CRR ($C_{CRR}$)", f"{prix_crr:.4f} €")
-col2.metric("Prix Black-Scholes ($C_{BS}$)", f"{prix_bs:.4f} €")
-col3.metric("Erreur $|\epsilon_N|$", f"{erreur:.4f} €")
-col4.metric("Delta ($\Delta_{BS}$)", f"{delta_bs:.4f}")
 
-st.markdown("---")
+# ═══════════════════════════════════════════════════════════════════════════════
+# HEADER PRINCIPAL
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# ==========================================
-# LES ONGLETS D'ANALYSE (VISUALISATION)
-# ==========================================
-tab1, tab2, tab3, tab4 = st.tabs(["📉 Convergence CRR/BS", "🌳 Arbre Binomial", "🎲 Stratégies Naïves", "🛡️ Delta-Hedging (Monte Carlo)"])
+st.markdown(f"""
+<div class="terminal-header">
+  <div>
+    <div class="terminal-title">◈ CRR Pricing Terminal</div>
+    <div class="terminal-subtitle">
+      Cox-Ross-Rubinstein · Black-Scholes · Delta-Hedging Monte Carlo
+      &nbsp;|&nbsp; ESILV Fintech A4 — Equipe 4302
+    </div>
+  </div>
+  <div style="text-align:right">
+    <div class="terminal-badge"><span class="status-dot"></span>LIVE · MODE {mode.upper()}</div>
+    <div style="font-size:0.65rem;color:{MUTED};margin-top:0.3rem;font-family:monospace">
+      S₀={S0:.2f} · K={K:.2f} · T={T:.1f}y · r={r:.3f} · σ={sigma:.2%} · N={N}
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÉTRIQUES PRINCIPALES — 4 CARDS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+c1, c2, c3, c4 = st.columns(4)
+
+with c1:
+    st.markdown(f"""
+    <div class="metric-card cyan">
+      <div class="metric-label">Prix CRR</div>
+      <div class="metric-value cyan">{prix_crr:.4f} €</div>
+      <div class="metric-sub">Induction rétrograde · N={N} pas</div>
+    </div>""", unsafe_allow_html=True)
+
+with c2:
+    st.markdown(f"""
+    <div class="metric-card green">
+      <div class="metric-label">Prix Black-Scholes</div>
+      <div class="metric-value green">{prix_bs:.4f} €</div>
+      <div class="metric-sub">Formule fermée · référence continue</div>
+    </div>""", unsafe_allow_html=True)
+
+with c3:
+    err_color = GREEN if erreur_pct < 0.5 else (ORANGE if erreur_pct < 2 else RED)
+    st.markdown(f"""
+    <div class="metric-card red">
+      <div class="metric-label">Erreur |ε_N|</div>
+      <div class="metric-value" style="color:{err_color}">{erreur:.4f} €</div>
+      <div class="metric-sub">Relatif : {erreur_pct:.3f}% · O(1/N)</div>
+    </div>""", unsafe_allow_html=True)
+
+with c4:
+    st.markdown(f"""
+    <div class="metric-card purple">
+      <div class="metric-label">Delta BS (Δ)</div>
+      <div class="metric-value purple">{delta_bs:.4f}</div>
+      <div class="metric-sub">∂C/∂S = N(d₁) ∈ [0, 1]</div>
+    </div>""", unsafe_allow_html=True)
+
+st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ONGLETS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📉  CONVERGENCE",
+    "🌳  ARBRE BINOMIAL",
+    "🎲  STRATÉGIES NAÏVES",
+    "🛡  DELTA-HEDGING",
+])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 1 — CONVERGENCE
+# ─────────────────────────────────────────────────────────────────────────────
 
 with tab1:
-    st.header("Convergence vers Black-Scholes")
-    st.markdown("Évolution du prix CRR en fonction du nombre de pas $N$ par rapport à la valeur théorique continue.")
-    
-    with st.spinner("Calcul de la convergence en cours..."):
-        # On calcule les prix CRR pour différentes valeurs de N (de 1 à max_N)
-        max_steps = max(N, 50) # On va jusqu'au N choisi, ou au moins 50 pour voir la courbe
-        plage_N = list(range(1, max_steps + 1))
-        prix_crr_liste = [crr_call_price(S0, K, T, r, sigma, n) for n in plage_N]
+    st.markdown('<div class="section-title">Convergence CRR → Black-Scholes</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="info-band">lim_{{N→∞}} C_CRR(N) = C_BS = '
+        f'<b style="color:{CYAN}">{prix_bs:.4f} €</b> &nbsp;·&nbsp; '
+        f'Erreur à N={N} : <b style="color:{err_color}">{erreur:.4f} €</b> '
+        f'({erreur_pct:.3f}%)</div>',
+        unsafe_allow_html=True,
+    )
 
-        # Création du graphique Plotly
-        fig_conv = go.Figure()
-        
-        # Courbe CRR (en dents de scie qui s'aplatit)
-        fig_conv.add_trace(go.Scatter(x=plage_N, y=prix_crr_liste, mode='lines', name='Prix CRR', line=dict(color='#1f77b4')))
-        
-        # Ligne droite Black-Scholes (Asymptote)
-        fig_conv.add_trace(go.Scatter(x=[1, max_steps], y=[prix_bs, prix_bs], mode='lines', name='Prix Black-Scholes', line=dict(color='red', dash='dash')))
+    with st.spinner("Calcul..."):
+        Ns, prices, errors = cached_convergence(S0, K, T, r, sigma, N, prix_bs)
 
-        fig_conv.update_layout(
-            title="Convergence asymptotique du modèle binomial",
-            xaxis_title="Nombre de pas (N)",
-            yaxis_title="Prix du Call",
-            template="plotly_white",
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig_conv, use_container_width=True)
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.65, 0.35],
+        shared_xaxes=True,
+        vertical_spacing=0.06,
+    )
+
+    # Courbe CRR
+    fig.add_trace(go.Scatter(
+        x=Ns, y=prices,
+        mode="lines", name="C_CRR(N)",
+        line=dict(color=CYAN, width=2),
+        hovertemplate="N=%{x}<br>C_CRR=%{y:.4f} €<extra></extra>",
+    ), row=1, col=1)
+
+    # Ligne BS
+    fig.add_trace(go.Scatter(
+        x=[Ns[0], Ns[-1]], y=[prix_bs, prix_bs],
+        mode="lines", name=f"C_BS = {prix_bs:.4f} €",
+        line=dict(color=RED, width=1.5, dash="dash"),
+        hovertemplate=f"C_BS = {prix_bs:.4f} €<extra></extra>",
+    ), row=1, col=1)
+
+    # Annotation point actuel N
+    fig.add_trace(go.Scatter(
+        x=[N], y=[prix_crr],
+        mode="markers", name=f"N={N}",
+        marker=dict(color=YELLOW, size=10, symbol="diamond",
+                    line=dict(color="white", width=1.5)),
+        hovertemplate=f"N={N}<br>C_CRR={prix_crr:.4f} €<extra></extra>",
+    ), row=1, col=1)
+
+    # Courbe erreur
+    fig.add_trace(go.Scatter(
+        x=Ns, y=errors,
+        mode="lines", name="ε_N",
+        line=dict(color=ORANGE, width=1.5),
+        fill="tozeroy", fillcolor="rgba(255,153,0,0.08)",
+        hovertemplate="N=%{x}<br>ε_N=%{y:.6f} €<extra></extra>",
+    ), row=2, col=1)
+
+    fig.update_layout(
+        **THEME_LAYOUT,
+        height=500,
+        hovermode="x unified",
+        legend=dict(orientation="h", y=1.05, x=0),
+        margin=dict(t=20, b=30, l=50, r=20),
+    )
+    fig.update_yaxes(title_text="Prix (€)", row=1, col=1, **AXIS_STYLE)
+    fig.update_yaxes(title_text="ε_N (€)", type="log", row=2, col=1, **AXIS_STYLE)
+    fig.update_xaxes(title_text="Nombre de pas N", row=2, col=1, **AXIS_STYLE)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Tableau comparatif
+    key_ns = sorted(set(n for n in [5, 10, 25, 50, 100, 200, 500, N] if 1 <= n <= N))
+    rows = []
+    for n in key_ns:
+        c = crr_call_price(S0, K, T, r, sigma, n)
+        e = abs(c - prix_bs)
+        rows.append({
+            "N": n,
+            "C_CRR(N)": f"{c:.6f} €",
+            "C_BS": f"{prix_bs:.6f} €",
+            "ε_N (€)": f"{e:.6f}",
+            "ε_N (%)": f"{e/prix_bs*100:.4f}%" if prix_bs > 1e-6 else "—",
+        })
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 2 — ARBRE BINOMIAL
+# ─────────────────────────────────────────────────────────────────────────────
 
 with tab2:
-    st.header("Visualisation de l'Arbre CRR")
-    
-    if N > 6:
-        st.warning(f"⚠️ Le nombre de pas actuel est N = {N}. L'arbre est trop dense pour être affiché lisiblement. Veuillez régler N sur une valeur inférieure ou égale à 6 dans la barre latérale.")
-    else:
-        st.markdown(f"Trajectoires possibles du sous-jacent pour $N={N}$ pas.")
-        
-        # Recalcul des paramètres de l'arbre
-        dt = T / N
-        u = np.exp(sigma * np.sqrt(dt))
-        d = 1 / u
-        
-        # Construction des coordonnées des nœuds et des arêtes
-        node_x, node_y, node_text = [], [], []
-        edge_x, edge_y = [], []
-        
-        for i in range(N + 1):
-            for j in range(i + 1):
-                S_ij = S0 * (u**(i-j)) * (d**j)
-                node_x.append(i)
-                node_y.append(S_ij)
-                node_text.append(f"{S_ij:.2f}")
-                
-                if i < N: # Si on n'est pas à la dernière étape, on crée les branches vers i+1
-                    S_up = S_ij * u
-                    S_down = S_ij * d
-                    # Branche Haut
-                    edge_x.extend([i, i+1, None])
-                    edge_y.extend([S_ij, S_up, None])
-                    # Branche Bas
-                    edge_x.extend([i, i+1, None])
-                    edge_y.extend([S_ij, S_down, None])
+    st.markdown('<div class="section-title">Arbre Binomial CRR</div>', unsafe_allow_html=True)
 
-        # Dessin de l'arbre
-        fig_tree = go.Figure()
-        
-        # Ajout des branches (lignes grises)
-        fig_tree.add_trace(go.Scatter(x=edge_x, y=edge_y, mode='lines', line=dict(color='lightgray', width=1.5), hoverinfo='none', showlegend=False))
-        
-        # Ajout des nœuds (points bleus avec le prix écrit au-dessus)
-        fig_tree.add_trace(go.Scatter(x=node_x, y=node_y, mode='markers+text', text=node_text, textposition="top center", 
-                                      marker=dict(size=12, color='#00CC96', line=dict(width=2, color='DarkSlateGrey')), showlegend=False))
-        
-        fig_tree.update_layout(
-            xaxis_title="Pas de temps (i)",
-            yaxis_title="Prix du sous-jacent (S)",
-            template="plotly_white",
-            xaxis=dict(showgrid=False, zeroline=False, dtick=1),
-            yaxis=dict(showgrid=False, zeroline=False)
+    col_l, col_r = st.columns([3, 1])
+    with col_r:
+        N_tree = st.number_input("N (arbre)", 1, 6, min(N, 4), key="ntree",
+                                  help="Max 6 pour la lisibilité")
+        st.markdown(
+            f'<div class="info-band" style="font-size:0.72rem">'
+            f'u = {np.exp(sigma * np.sqrt(T/N_tree)):.4f}<br>'
+            f'd = {np.exp(-sigma * np.sqrt(T/N_tree)):.4f}<br>'
+            f'p = {((np.exp(r*T/N_tree) - np.exp(-sigma*np.sqrt(T/N_tree))) / (np.exp(sigma*np.sqrt(T/N_tree)) - np.exp(-sigma*np.sqrt(T/N_tree)))):.4f}'
+            f'</div>',
+            unsafe_allow_html=True
         )
-        st.plotly_chart(fig_tree, use_container_width=True)
+
+    if N > 6:
+        st.markdown(f'<div class="warn-band">⚠ N={N} — affichage limité à N_tree={N_tree}</div>', unsafe_allow_html=True)
+
+    node_x, node_y, node_text, node_color, edge_x, edge_y, p_tree = crr_tree_nodes(
+        S0, K, T, r, sigma, N_tree
+    )
+
+    fig_tree = go.Figure()
+
+    # Arêtes
+    fig_tree.add_trace(go.Scatter(
+        x=edge_x, y=edge_y,
+        mode="lines",
+        line=dict(color="#1E3A5F", width=1.5),
+        hoverinfo="none", showlegend=False,
+    ))
+
+    # Nœuds
+    fig_tree.add_trace(go.Scatter(
+        x=node_x, y=node_y,
+        mode="markers+text",
+        marker=dict(
+            size=48,
+            color=node_color,
+            line=dict(color="white", width=1.5),
+            opacity=0.9,
+        ),
+        text=node_text,
+        textposition="middle center",
+        textfont=dict(color="white", size=9, family="monospace"),
+        hovertemplate="S = %{text} €<extra></extra>",
+        showlegend=False,
+    ))
+
+    # Annotations p et 1-p sur la 1ère branche
+    fig_tree.add_annotation(x=0.58, y=0.55, text=f"↑ p={p_tree:.3f}",
+                             showarrow=False, font=dict(size=9, color=CYAN),
+                             bgcolor="rgba(10,14,26,0.7)")
+    fig_tree.add_annotation(x=0.58, y=-0.55, text=f"↓ 1-p={1-p_tree:.3f}",
+                             showarrow=False, font=dict(size=9, color=MUTED),
+                             bgcolor="rgba(10,14,26,0.7)")
+
+    # Légende manuelle
+    for color, label in [(GREEN, "ITM à maturité"), (MUTED, "OTM"), (CYAN, "Nœuds intermédiaires")]:
+        fig_tree.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=10, color=color), name=label,
+        ))
+
+    fig_tree.update_layout(
+        **THEME_LAYOUT,
+        title=dict(text=f"Arbre binomial — N={N_tree} pas", font=dict(color=CYAN, size=13)),
+        height=420 + N_tree * 50,
+        xaxis=dict(title="Etape i", tickvals=list(range(N_tree + 1)),
+                   ticktext=[f"t={i}" for i in range(N_tree + 1)],
+                   showgrid=False, zeroline=False, gridcolor=BORDER),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        legend=dict(orientation="h", y=1.05, x=0),
+        margin=dict(t=50, b=30, l=30, r=30),
+    )
+    st.plotly_chart(fig_tree, use_container_width=True)
+
+    # Tableau maturité
+    dt_t = T / N_tree
+    u_t = np.exp(sigma * np.sqrt(dt_t))
+    d_t = 1.0 / u_t
+    st.markdown(f'<div class="section-title">Nœuds à maturité (étape {N_tree})</div>', unsafe_allow_html=True)
+    maturity_rows = []
+    for j in range(N_tree + 1):
+        s = S0 * (u_t ** (N_tree - j)) * (d_t ** j)
+        payoff = max(s - K, 0.0)
+        maturity_rows.append({
+            "j": j,
+            f"S_{{{N_tree},{j}}} (€)": f"{s:.4f}",
+            "Payoff max(S−K,0) (€)": f"{payoff:.4f}",
+            "Statut": "ITM ✅" if s > K else "OTM ❌",
+        })
+    st.dataframe(maturity_rows, use_container_width=True, hide_index=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 3 — STRATÉGIES NAÏVES
+# ─────────────────────────────────────────────────────────────────────────────
 
 with tab3:
-    st.header("Analyse de la Martingale (Doubling Strategy)")
-    st.markdown("Contrairement au Delta-Hedging du modèle CRR qui neutralise le risque, la stratégie naïve de la Martingale espère un retournement en doublant la mise à chaque perte. Cette simulation illustre le risque de ruine certaine avec un capital fini.")
-    
-    # Paramètres de la simulation
+    st.markdown('<div class="section-title">Martingale — Doubling Strategy</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="info-band">La stratégie Martingale double la mise après chaque perte. '
+        'Avec un capital fini, la <b>ruine est certaine</b> à long terme — '
+        'contrairement au Delta-Hedging CRR (stratégie admissible et autofinancée).</div>',
+        unsafe_allow_html=True,
+    )
+
     col_m1, col_m2, col_m3 = st.columns(3)
-    W0 = col_m1.number_input("Capital Initial (€)", value=1000, step=100)
-    mise_initiale = col_m2.number_input("Mise de base (€)", value=10, step=5)
-    n_tours = col_m3.slider("Nombre de paris max", 10, 150, 50)
-    
-    # Bouton pour lancer la simulation (très stylé en présentation)
-    if st.button("🎲 Lancer une simulation (Monte Carlo)"):
-        capital = W0
-        mise = mise_initiale
-        historique_capital = [capital]
-        
-        for i in range(n_tours):
-            if capital < mise: 
-                # Ruine : le joueur n'a plus assez d'argent pour suivre la mise exponentielle
-                historique_capital.append(0)
-                break
-                
-            # Simulation d'un pari type "Pile ou Face" (Marché symétrique, p=0.5)
-            if np.random.rand() > 0.5: # Victoire
-                capital += mise
-                mise = mise_initiale # On réinitialise la mise à 10€
-            else: # Défaite
-                capital -= mise
-                mise *= 2 # Doubling strategy : on double la mise
-                
-            historique_capital.append(capital)
-            
-        # Création du graphique Plotly pour voir la chute
-        fig_martingale = go.Figure()
-        
-        # Ligne d'évolution du capital
-        fig_martingale.add_trace(go.Scatter(
-            y=historique_capital, 
-            mode='lines+markers', 
-            name="Capital du Joueur", 
-            line=dict(color='orange', width=2),
-            marker=dict(size=6)
+    with col_m1:
+        W0_m   = st.number_input("Capital initial W₀ (€)", value=1000, step=100, key="w0m")
+    with col_m2:
+        mise_m = st.number_input("Mise de base u (€)", value=10, step=5, key="misem")
+    with col_m3:
+        tours  = st.slider("Nombre de tours", 10, 150, 60, key="toursm")
+
+    if st.button("▶  SIMULER UNE TRAJECTOIRE"):
+        hist, ruined = simulate_martingale_single(W0_m, mise_m, tours)
+
+        fig_m = go.Figure()
+
+        # Zone sous la courbe
+        fill_color = "rgba(255,68,102,0.08)" if ruined else "rgba(0,255,136,0.06)"
+        line_color = RED if ruined else GREEN
+
+        fig_m.add_trace(go.Scatter(
+            y=hist,
+            mode="lines+markers",
+            line=dict(color=line_color, width=2),
+            marker=dict(size=5, color=line_color),
+            fill="tozeroy", fillcolor=fill_color,
+            name="Capital",
+            hovertemplate="Tour %{x}<br>Capital=%{y:.0f} €<extra></extra>",
         ))
-        
-        # Ligne de Ruine (Rouge)
-        fig_martingale.add_trace(go.Scatter(
-            x=[0, len(historique_capital)-1], 
-            y=[0, 0], 
-            mode='lines', 
-            name="Seuil de Ruine", 
-            line=dict(color='red', dash='dash', width=2)
-        ))
-        
-        fig_martingale.update_layout(
-            title="Évolution du capital et Risque de Ruine",
-            xaxis_title="Nombre de paris (t)",
-            yaxis_title="Capital restant (€)",
-            template="plotly_white"
+
+        # Ligne de ruine
+        fig_m.add_hline(y=0, line_color=RED, line_width=2, line_dash="dash",
+                        annotation_text="RUINE", annotation_font_color=RED,
+                        annotation_position="top right")
+
+        # Ligne capital initial
+        fig_m.add_hline(y=W0_m, line_color=MUTED, line_width=1, line_dash="dot",
+                        annotation_text=f"W₀={W0_m}€",
+                        annotation_font_color=MUTED,
+                        annotation_position="bottom right")
+
+        fig_m.update_layout(
+            **THEME_LAYOUT,
+            title=dict(text="Evolution du capital — Martingale (Doubling Strategy)",
+                       font=dict(color=CYAN, size=13)),
+            xaxis=dict(title="Tours", **AXIS_STYLE),
+            yaxis=dict(title="Capital (€)", **AXIS_STYLE),
+            height=380,
+            showlegend=False,
+            margin=dict(t=50, b=40, l=60, r=20),
         )
-        st.plotly_chart(fig_martingale, use_container_width=True)
-        
-        # Affichage du résultat final
-        if historique_capital[-1] == 0:
-            st.error(f"💥 RUINE TOTALE au tour {len(historique_capital)-1} ! Le capital n'était pas suffisant pour couvrir la mise exponentielle.")
+        st.plotly_chart(fig_m, use_container_width=True)
+
+        if ruined:
+            st.markdown(
+                f'<div class="error-band">💥 RUINE au tour {len(hist)-1} — '
+                f'la mise exponentielle a dépassé le capital disponible.</div>',
+                unsafe_allow_html=True,
+            )
         else:
-            st.success(f"✅ Survie réussie sur {n_tours} tours. Capital final : {historique_capital[-1]} €. Mais jusqu'à quand ?")
+            st.markdown(
+                f'<div class="info-band">✅ Survie sur {len(hist)-1} tours — '
+                f'Capital final : <b style="color:{GREEN}">{hist[-1]:.0f} €</b>. '
+                f'Mais la ruine est inévitable à long terme.</div>',
+                unsafe_allow_html=True,
+            )
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 4 — DELTA-HEDGING MONTE CARLO
+# ─────────────────────────────────────────────────────────────────────────────
 
 with tab4:
-    st.header("Couverture Dynamique (Delta-Hedging)")
-    st.markdown("Simulation de trajectoires par mouvement brownien géométrique et calcul de l'erreur de réplication (PnL) à maturité.")
-    
+    st.markdown('<div class="section-title">Delta-Hedging — Simulation Monte Carlo</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="info-band">Simulation de trajectoires GBM et calcul du P&L de couverture. '
+        'Plus la fréquence de rebalancement augmente, plus le P&L converge vers 0.</div>',
+        unsafe_allow_html=True,
+    )
+
     col_mc1, col_mc2 = st.columns(2)
-    M_sim = col_mc1.slider("Nombre de trajectoires (M)", min_value=10, max_value=1000, value=100, step=10)
-    N_steps_mc = col_mc2.slider("Fréquence de rebalancement (Pas)", min_value=10, max_value=252, value=50, step=10)
-    
-    if st.button("🚀 Lancer le Delta-Hedging"):
-        with st.spinner("Simulation Monte Carlo en cours..."):
-            trajectoires, pnl = monte_carlo_hedging(S0, K, T, r, sigma, M_sim, N_steps_mc)
-            
-            col_res1, col_res2 = st.columns(2)
-            
-            # Graphique 1 : Trajectoires du sous-jacent
+    with col_mc1:
+        M_sim     = st.slider("Trajectoires M", 10, 1000, 200, step=10, key="msim")
+    with col_mc2:
+        N_steps   = st.slider("Fréquence de rebalancement (pas)", 10, 252, 52, step=1, key="nsteps")
+
+    if st.button("▶  LANCER LA SIMULATION MONTE CARLO"):
+        with st.spinner("Simulation en cours..."):
+            S_mc, pnl = cached_monte_carlo(S0, K, T, r, sigma, M_sim, N_steps)
+
+        pnl_mean  = np.mean(pnl)
+        pnl_std   = np.std(pnl)
+        pnl_q5    = np.percentile(pnl, 5)
+        pnl_q95   = np.percentile(pnl, 95)
+
+        # ── Métriques MC
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1.markdown(f"""<div class="metric-card cyan">
+            <div class="metric-label">P&L Moyen</div>
+            <div class="metric-value" style="color:{CYAN if abs(pnl_mean)<0.1 else RED};font-size:1.3rem">{pnl_mean:+.4f} €</div>
+            <div class="metric-sub">Erreur de réplication moyenne</div></div>""", unsafe_allow_html=True)
+
+        mc2.markdown(f"""<div class="metric-card purple">
+            <div class="metric-label">Ecart-Type</div>
+            <div class="metric-value purple" style="font-size:1.3rem">{pnl_std:.4f} €</div>
+            <div class="metric-sub">Dispersion du P&L</div></div>""", unsafe_allow_html=True)
+
+        mc3.markdown(f"""<div class="metric-card green">
+            <div class="metric-label">Q5 / Q95</div>
+            <div class="metric-value green" style="font-size:1.3rem">[{pnl_q5:.3f}, {pnl_q95:.3f}]</div>
+            <div class="metric-sub">Intervalle de confiance 90%</div></div>""", unsafe_allow_html=True)
+
+        mc4.markdown(f"""<div class="metric-card red">
+            <div class="metric-label">Trajectoires</div>
+            <div class="metric-value red" style="font-size:1.3rem">{M_sim}</div>
+            <div class="metric-sub">{N_steps} rebalancements chacune</div></div>""", unsafe_allow_html=True)
+
+        st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
+
+        col_g1, col_g2 = st.columns(2)
+
+        # ── Graphique 1 : Trajectoires GBM
+        with col_g1:
             fig_traj = go.Figure()
-            # On affiche max 100 trajectoires pour ne pas faire lagger le navigateur
-            for i in range(min(M_sim, 100)):
-                fig_traj.add_trace(go.Scatter(y=trajectoires[i, :], mode='lines', line=dict(width=1, color='lightblue'), opacity=0.5, showlegend=False))
-            fig_traj.add_trace(go.Scatter(y=[K]*(N_steps_mc+1), mode='lines', line=dict(color='red', dash='dash', width=2), name="Strike (K)"))
-            
-            fig_traj.update_layout(title="Trajectoires simulées du sous-jacent", xaxis_title="Pas de temps (k)", yaxis_title="Prix (S)", template="plotly_white")
-            col_res1.plotly_chart(fig_traj, width='stretch')
-            
-            # Graphique 2 : Histogramme du P&L (Erreur de couverture)
+
+            n_display = min(M_sim, 80)
+            for i in range(n_display):
+                fig_traj.add_trace(go.Scatter(
+                    y=S_mc[i, :],
+                    mode="lines",
+                    line=dict(width=0.7, color="rgba(0,212,255,0.25)"),
+                    showlegend=False, hoverinfo="skip",
+                ))
+
+            # Strike
+            fig_traj.add_hline(
+                y=K, line_color=RED, line_width=1.5, line_dash="dash",
+                annotation_text=f"K={K:.0f}€", annotation_font_color=RED,
+                annotation_position="top right",
+            )
+
+            fig_traj.update_layout(
+                **THEME_LAYOUT,
+                title=dict(text=f"Trajectoires GBM (affiché : {n_display}/{M_sim})",
+                           font=dict(color=CYAN, size=12)),
+                xaxis=dict(title="Pas (k)", **AXIS_STYLE),
+                yaxis=dict(title="Prix S (€)", **AXIS_STYLE),
+                height=360,
+                margin=dict(t=50, b=40, l=60, r=20),
+            )
+            st.plotly_chart(fig_traj, use_container_width=True)
+
+        # ── Graphique 2 : Histogramme P&L
+        with col_g2:
             fig_pnl = go.Figure()
-            fig_pnl.add_trace(go.Histogram(x=pnl, nbinsx=30, marker_color='#00CC96'))
-            fig_pnl.update_layout(title="Distribution du P&L de Couverture", xaxis_title="Erreur de réplication (€)", yaxis_title="Fréquence", template="plotly_white")
-            
-            # Ligne verticale à 0
-            fig_pnl.add_vline(x=0, line_dash="dash", line_color="red")
-            col_res2.plotly_chart(fig_pnl, width='stretch')
-            
-            st.success(f"Erreur moyenne de couverture (PnL) : {np.mean(pnl):.4f} € | Écart-type : {np.std(pnl):.4f} €")
-            st.info("💡 Plus la fréquence de rebalancement augmente, plus la distribution du P&L se resserre autour de zéro (couverture parfaite en continu).")
+
+            fig_pnl.add_trace(go.Histogram(
+                x=pnl,
+                nbinsx=40,
+                marker_color=CYAN,
+                marker_line_color="rgba(0,212,255,0.4)",
+                marker_line_width=0.5,
+                opacity=0.8,
+                name="P&L",
+                hovertemplate="P&L=%{x:.3f} €<br>Freq=%{y}<extra></extra>",
+            ))
+
+            fig_pnl.add_vline(x=0, line_color=RED, line_width=1.5, line_dash="dash",
+                              annotation_text="P&L=0", annotation_font_color=RED)
+            fig_pnl.add_vline(x=pnl_mean, line_color=YELLOW, line_width=1, line_dash="dot",
+                              annotation_text=f"μ={pnl_mean:.3f}", annotation_font_color=YELLOW)
+
+            fig_pnl.update_layout(
+                **THEME_LAYOUT,
+                title=dict(text="Distribution du P&L de couverture",
+                           font=dict(color=CYAN, size=12)),
+                xaxis=dict(title="Erreur de réplication (€)", **AXIS_STYLE),
+                yaxis=dict(title="Fréquence", **AXIS_STYLE),
+                height=360,
+                showlegend=False,
+                margin=dict(t=50, b=40, l=60, r=20),
+            )
+            st.plotly_chart(fig_pnl, use_container_width=True)
+
+        st.markdown(
+            f'<div class="info-band">💡 Avec N_steps={N_steps} rebalancements — '
+            f'P&L moyen = <b style="color:{CYAN}">{pnl_mean:+.4f} €</b>, '
+            f'σ(P&L) = <b style="color:{PURPLE}">{pnl_std:.4f} €</b>. '
+            f'Augmenter N_steps → σ(P&L) → 0 (couverture parfaite en continu).</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div class="info-band" style="text-align:center;padding:2rem">▶ Cliquez sur <b>LANCER LA SIMULATION</b> pour démarrer.</div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FOOTER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+st.markdown("---")
+st.markdown(
+    f'<div style="font-family:monospace;font-size:0.65rem;color:{MUTED};text-align:center">'
+    f'CRR Pricing Terminal v1.0 &nbsp;·&nbsp; '
+    f'Matthieu BALLISTE · Nathan DENOUX · Ilan CHADI · Ziad EL IDRISSI AMIRI &nbsp;·&nbsp; '
+    f'Tuteur : Charaf LOUHMADI &nbsp;·&nbsp; ESILV Fintech A4 — Mars 2026'
+    f'</div>',
+    unsafe_allow_html=True,
+)
