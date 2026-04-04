@@ -27,7 +27,7 @@ from backend import (
 
 st.set_page_config(
     page_title="CRR Pricing Terminal",
-    page_icon="📊",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -490,10 +490,10 @@ st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📉  CONVERGENCE",
-    "🌳  ARBRE BINOMIAL",
-    "🎲  STRATÉGIES NAÏVES",
-    "🛡  DELTA-HEDGING",
+    "◆ Convergence",
+    "◆ Arbre Binomial",
+    "◆ Stratégies Naïves",
+    "◆ Delta-Hedging",
 ])
 
 
