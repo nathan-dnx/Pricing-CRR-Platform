@@ -10,6 +10,8 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import base64
+import os
 
 from backend import (
     black_scholes_call,
@@ -33,6 +35,19 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LOGO SVG
+# ─────────────────────────────────────────────────────────────────────────────
+_logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
+with open(_logo_path, "rb") as _f:
+    _logo_b64 = base64.b64encode(_f.read()).decode()
+LOGO_IMG = f'<img src="data:image/png;base64,{_logo_b64}" style="width:100%;max-width:260px;display:block;" alt="CRR Logo"/>'
+
+_logo2_path = os.path.join(os.path.dirname(__file__), "logo2.png")
+with open(_logo2_path, "rb") as _f:
+    _logo2_b64 = base64.b64encode(_f.read()).decode()
+LOGO2_IMG = f'<img src="data:image/png;base64,{_logo2_b64}" style="height:80px;display:block;" alt="CRR Logo"/>'
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PALETTE & THÈME
 # ─────────────────────────────────────────────────────────────────────────────
 CYAN    = "#00D4FF"
@@ -46,7 +61,7 @@ BG_CARD = "#111827"
 BG_MID  = "#1A2235"
 BORDER  = "#1E3A5F"
 TEXT    = "#E2E8F0"
-MUTED   = "#64748B"
+MUTED   = "#94A3B8"
 
 # Styles de base partagés — sans legend/xaxis/yaxis (gérés par figure)
 THEME_LAYOUT = dict(
@@ -314,8 +329,8 @@ def cached_monte_carlo(S0, K, T, r, sigma, M, N_steps):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
-    st.markdown('<div class="sidebar-logo">◈ CRR Terminal</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sidebar-sub">Pricing Engine v1.0 — Equipe 4302</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="padding:0rem 0 2rem 0">{LOGO_IMG}</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-sub">Pricing Engine v1.2 — Equipe 4302</div>', unsafe_allow_html=True)
     st.markdown("---")
 
     # ── Mode
@@ -427,8 +442,8 @@ erreur_pct        = (erreur / prix_bs * 100) if prix_bs > 1e-6 else 0.0
 st.markdown(f"""
 <div class="terminal-header">
   <div>
-    <div class="terminal-title">◈ CRR Pricing Terminal</div>
-    <div class="terminal-subtitle">
+    {LOGO2_IMG}
+    <div class="terminal-subtitle" style="margin-top:1.5rem">
       Cox-Ross-Rubinstein · Black-Scholes · Delta-Hedging Monte Carlo
       &nbsp;|&nbsp; ESILV Fintech A4 — Equipe 4302
     </div>
@@ -900,9 +915,9 @@ with tab4:
 st.markdown("---")
 st.markdown(
     f'<div style="font-family:monospace;font-size:0.65rem;color:{MUTED};text-align:center">'
-    f'CRR Pricing Terminal v1.0 &nbsp;·&nbsp; '
+    f'CRR Pricing Terminal v1.2 &nbsp;·&nbsp; '
     f'Matthieu BALLISTE · Nathan DENOUX · Ilan CHADI · Ziad EL IDRISSI AMIRI &nbsp;·&nbsp; '
-    f'Tuteur : Charaf LOUHMADI &nbsp;·&nbsp; ESILV Fintech A4 — Mars 2026'
+    f'Tuteur : Charaf LOUHMADI &nbsp;·&nbsp; ESILV Fintech A4 — Avril 2026'
     f'</div>',
     unsafe_allow_html=True,
 )
