@@ -45,7 +45,7 @@ LOGO_IMG = f'<img src="data:image/png;base64,{_logo_b64}" style="width:100%;max-
 _logo2_path = os.path.join(os.path.dirname(__file__), "logo2.png")
 with open(_logo2_path, "rb") as _f:
     _logo2_b64 = base64.b64encode(_f.read()).decode()
-LOGO2_IMG = f'<img src="data:image/png;base64,{_logo2_b64}" style="height:80px;display:block;" alt="CRR Logo"/>'
+LOGO2_IMG = f'<img src="data:image/png;base64,{_logo2_b64}" style="height:110px;display:block;" alt="CRR Logo"/>'
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PALETTE & THÈME
@@ -104,7 +104,7 @@ st.markdown(f"""
     background: {BG_CARD};
     border: 1px solid {BORDER};
     border-radius: 8px;
-    padding: 1rem 1.2rem 0.8rem 1.2rem;
+    padding: 0.65rem 1rem 0.55rem 1rem;
     position: relative;
     overflow: hidden;
   }}
@@ -120,15 +120,15 @@ st.markdown(f"""
   .metric-card.purple::before{{ background: {PURPLE}; }}
 
   .metric-label {{
-    font-size: 0.68rem;
+    font-size: 0.62rem;
     color: {MUTED};
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    margin-bottom: 0.3rem;
+    margin-bottom: 0.2rem;
     font-family: monospace;
   }}
   .metric-value {{
-    font-size: 1.6rem;
+    font-size: 1.25rem;
     font-weight: 700;
     font-family: monospace;
     letter-spacing: 0.04em;
@@ -140,9 +140,9 @@ st.markdown(f"""
   .metric-value.purple {{ color: {PURPLE}; }}
 
   .metric-sub {{
-    font-size: 0.72rem;
+    font-size: 0.62rem;
     color: {MUTED};
-    margin-top: 0.3rem;
+    margin-top: 0.2rem;
     font-family: monospace;
   }}
 
@@ -151,7 +151,7 @@ st.markdown(f"""
     background: linear-gradient(135deg, {BG_CARD} 0%, #0D1A2E 100%);
     border: 1px solid {BORDER};
     border-radius: 10px;
-    padding: 1.2rem 1.8rem;
+    padding: 1.6rem 2rem;
     margin-bottom: 1.2rem;
     display: flex;
     align-items: center;
@@ -175,9 +175,9 @@ st.markdown(f"""
     background: rgba(0, 212, 255, 0.12);
     border: 1px solid {CYAN};
     border-radius: 20px;
-    padding: 0.3rem 0.9rem;
+    padding: 0.4rem 1.1rem;
     font-family: monospace;
-    font-size: 0.72rem;
+    font-size: 0.85rem;
     color: {CYAN};
     letter-spacing: 0.06em;
   }}
@@ -230,14 +230,14 @@ st.markdown(f"""
   /* ── Tabs */
   div[data-testid="stTabs"] button {{
     font-family: monospace !important;
-    font-size: 0.78rem !important;
+    font-size: 0.9rem !important;
     font-weight: 700 !important;
     letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
     color: {MUTED} !important;
     background: transparent !important;
     border: none !important;
-    padding: 0.5rem 1rem !important;
+    padding: 0.65rem 1.3rem !important;
   }}
   div[data-testid="stTabs"] button[aria-selected="true"] {{
     color: {CYAN} !important;
@@ -443,61 +443,15 @@ st.markdown(f"""
 <div class="terminal-header">
   <div>
     {LOGO2_IMG}
-    <div class="terminal-subtitle" style="margin-top:1.5rem">
-      Cox-Ross-Rubinstein · Black-Scholes · Delta-Hedging Monte Carlo
-      &nbsp;|&nbsp; ESILV Fintech A4 — Equipe 4302
-    </div>
   </div>
   <div style="text-align:right">
     <div class="terminal-badge"><span class="status-dot"></span>LIVE · MODE {mode.upper()}</div>
-    <div style="font-size:0.65rem;color:{MUTED};margin-top:0.3rem;font-family:monospace">
+    <div style="font-size:0.78rem;color:{MUTED};margin-top:0.4rem;font-family:monospace">
       S₀={S0:.2f} · K={K:.2f} · T={T:.1f}y · r={r:.3f} · σ={sigma:.2%} · N={N}
     </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MÉTRIQUES PRINCIPALES — 4 CARDS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-c1, c2, c3, c4 = st.columns(4)
-
-with c1:
-    st.markdown(f"""
-    <div class="metric-card cyan">
-      <div class="metric-label">Prix CRR</div>
-      <div class="metric-value cyan">{prix_crr:.4f} €</div>
-      <div class="metric-sub">Induction rétrograde · N={N} pas</div>
-    </div>""", unsafe_allow_html=True)
-
-with c2:
-    st.markdown(f"""
-    <div class="metric-card green">
-      <div class="metric-label">Prix Black-Scholes</div>
-      <div class="metric-value green">{prix_bs:.4f} €</div>
-      <div class="metric-sub">Formule fermée · référence continue</div>
-    </div>""", unsafe_allow_html=True)
-
-with c3:
-    err_color = GREEN if erreur_pct < 0.5 else (ORANGE if erreur_pct < 2 else RED)
-    st.markdown(f"""
-    <div class="metric-card red">
-      <div class="metric-label">Erreur |ε_N|</div>
-      <div class="metric-value" style="color:{err_color}">{erreur:.4f} €</div>
-      <div class="metric-sub">Relatif : {erreur_pct:.3f}% · O(1/N)</div>
-    </div>""", unsafe_allow_html=True)
-
-with c4:
-    st.markdown(f"""
-    <div class="metric-card purple">
-      <div class="metric-label">Delta BS (Δ)</div>
-      <div class="metric-value purple">{delta_bs:.4f}</div>
-      <div class="metric-sub">∂C/∂S = N(d₁) ∈ [0, 1]</div>
-    </div>""", unsafe_allow_html=True)
-
-st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -511,12 +465,48 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "◆ Delta-Hedging",
 ])
 
+# ─── Métriques communes (affichées en haut de chaque onglet) ──────────────────
+err_color = GREEN if erreur_pct < 0.5 else (ORANGE if erreur_pct < 2 else RED)
+
+def render_metrics():
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(f"""
+        <div class="metric-card cyan">
+          <div class="metric-label">Prix CRR</div>
+          <div class="metric-value cyan">{prix_crr:.4f} €</div>
+          <div class="metric-sub">Induction rétrograde · N={N} pas</div>
+        </div>""", unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="metric-card red">
+          <div class="metric-label">Prix Black-Scholes</div>
+          <div class="metric-value red">{prix_bs:.4f} €</div>
+          <div class="metric-sub">Formule fermée · référence continue</div>
+        </div>""", unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"""
+        <div class="metric-card green">
+          <div class="metric-label">Erreur |ε_N|</div>
+          <div class="metric-value" style="color:{err_color}">{erreur:.4f} €</div>
+          <div class="metric-sub">Relatif : {erreur_pct:.3f}% · O(1/N)</div>
+        </div>""", unsafe_allow_html=True)
+    with c4:
+        st.markdown(f"""
+        <div class="metric-card purple">
+          <div class="metric-label">Delta BS (Δ)</div>
+          <div class="metric-value purple">{delta_bs:.4f}</div>
+          <div class="metric-sub">∂C/∂S = N(d₁) ∈ [0, 1]</div>
+        </div>""", unsafe_allow_html=True)
+    st.markdown("<div style='height:0.75rem'></div>", unsafe_allow_html=True)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 1 — CONVERGENCE
 # ─────────────────────────────────────────────────────────────────────────────
 
 with tab1:
+    render_metrics()
     st.markdown('<div class="section-title">Convergence CRR → Black-Scholes</div>', unsafe_allow_html=True)
     st.markdown(
         f'<div class="info-band">lim_{{N→∞}} C_CRR(N) = C_BS = '
@@ -604,6 +594,7 @@ with tab1:
 # ─────────────────────────────────────────────────────────────────────────────
 
 with tab2:
+    render_metrics()
     st.markdown('<div class="section-title">Arbre Binomial CRR</div>', unsafe_allow_html=True)
 
     col_l, col_r = st.columns([3, 1])
@@ -704,6 +695,7 @@ with tab2:
 # ─────────────────────────────────────────────────────────────────────────────
 
 with tab3:
+    render_metrics()
     st.markdown('<div class="section-title">Martingale — Doubling Strategy</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="info-band">La stratégie Martingale double la mise après chaque perte. '
@@ -783,6 +775,7 @@ with tab3:
 # ─────────────────────────────────────────────────────────────────────────────
 
 with tab4:
+    render_metrics()
     st.markdown('<div class="section-title">Delta-Hedging — Simulation Monte Carlo</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="info-band">Simulation de trajectoires GBM et calcul du P&L de couverture. '
