@@ -71,7 +71,7 @@ def crr_tree_nodes(
     S0: float, K: float, T: float, r: float, sigma: float, N: int
 ) -> tuple[list, list, list, list, list]:
     """
-    Construit les coordonnées de l'arbre binomial pour N ≤ 6.
+    Construit les coordonnées de l'arbre binomial pour N ≤ 100.
 
     Retourne :
         node_x, node_y   : coordonnées des nœuds (x=étape, y=rang symétrique)
@@ -79,7 +79,7 @@ def crr_tree_nodes(
         node_color       : couleur selon ITM/OTM/intermédiaire
         edge_x, edge_y   : coordonnées des arêtes (avec None comme séparateur)
     """
-    N = min(N, 6)
+    N = min(N, 100)
     dt = T / N
     u = np.exp(sigma * np.sqrt(dt))
     d = 1.0 / u

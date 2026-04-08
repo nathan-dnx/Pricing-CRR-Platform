@@ -599,8 +599,8 @@ with tab2:
 
     col_l, col_r = st.columns([3, 1])
     with col_r:
-        N_tree = st.number_input("N (arbre)", 1, 6, min(N, 4), key="ntree",
-                                  help="Max 6 pour la lisibilité")
+        N_tree = st.number_input("N (arbre)", 1, 100, min(N, 4), key="ntree",
+                                  help="Max 100 pas")
         st.markdown(
             f'<div class="info-band" style="font-size:0.72rem">'
             f'u = {np.exp(sigma * np.sqrt(T/N_tree)):.4f}<br>'
@@ -610,7 +610,7 @@ with tab2:
             unsafe_allow_html=True
         )
 
-    if N > 6:
+    if N > 100:
         st.markdown(f'<div class="warn-band">⚠ N={N} — affichage limité à N_tree={N_tree}</div>', unsafe_allow_html=True)
 
     node_x, node_y, node_text, node_color, edge_x, edge_y, p_tree = crr_tree_nodes(
