@@ -2,6 +2,8 @@
   <img src="logo.png" alt="CRR Pricing Platform" height="100"/>
 </p>
 
+<br>
+
 **ESILV — Fintech A4 — Equipe 4302 — 2025/2026**
 
 Interactive platform for pricing a European call option using two models — the Cox-Ross-Rubinstein binomial tree and the Black-Scholes closed-form formula — and comparing their outputs in real time.
