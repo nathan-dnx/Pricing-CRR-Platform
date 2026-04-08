@@ -1,4 +1,6 @@
-# CRR Pricing Platform
+<p align="center">
+  <img src="logo2.png" alt="CRR Pricing Platform" height="100"/>
+</p>
 
 **ESILV — Fintech A4 — Equipe 4302 — 2025/2026**
 
